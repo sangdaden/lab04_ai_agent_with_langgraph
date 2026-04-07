@@ -1,7 +1,9 @@
 import logging
+from pathlib import Path
 from typing import Annotated
 
 from typing_extensions import TypedDict
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -17,7 +19,9 @@ logging.getLogger("openai").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # 1. Đọc System Prompt
-with open("system_prompt.txt", "r", encoding="utf-8") as f:
+BASE_DIR = Path(__file__).resolve().parent
+SYSTEM_PROMPT_PATH = BASE_DIR / "system_prompt.txt"
+with SYSTEM_PROMPT_PATH.open("r", encoding="utf-8") as f:
     system_prompt = f.read()
 
 # 2. Khai báo State
@@ -89,7 +93,19 @@ builder.add_edge(START, "agent")
 builder.add_conditional_edges("agent", tools_condition)
 builder.add_edge("tools", "agent")
 
-graph = builder.compile()
+checkpointer = MemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
+
+
+def run_agent(user_input: str, thread_id: str = "travelbuddy-cli-session") -> str:
+    """Run the TravelBuddy graph for a single user message."""
+    result = graph.invoke(
+        {"messages": [HumanMessage(content=user_input)]},
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    final = result["messages"][-1]
+    return str(final.content)
+
 
 # 6. Chat loop
 if __name__ == "__main__":
@@ -98,6 +114,8 @@ if __name__ == "__main__":
     print(" Gõ 'quit' để thoát")
     print("=" * 60)
 
+    thread_id = "travelbuddy-cli-session"
+
     while True:
         user_input = input("\nBạn: ").strip()
         if user_input.lower() in ("quit", "exit", "q"):
@@ -105,9 +123,8 @@ if __name__ == "__main__":
 
         print("\nTravelBuddy đang suy nghĩ...")
         try:
-            result = graph.invoke({"messages": [HumanMessage(content=user_input)]})
-            final = result["messages"][-1]
-            print(f"\nTravelBuddy: {final.content}")
+            reply = run_agent(user_input, thread_id=thread_id)
+            print(f"\nTravelBuddy: {reply}")
         except Exception:
             logger.exception("Graph execution failed")
             print("\nTravelBuddy: Xin lỗi, hiện hệ thống đang gặp sự cố. Bạn vui lòng thử lại sau nhé.")
